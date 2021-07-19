@@ -5,12 +5,14 @@ on:
     branches:
       - main
       - master
+      - next
     tags:
       - '*'
   pull_request:
     branches:
       - main
       - master
+      - next
 
 env:
   XDG_CACHE_HOME: ${{ github.workspace }}/.cache

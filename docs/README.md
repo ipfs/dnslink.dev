@@ -1,48 +1,250 @@
 ## Introduction
 
-DNSLink is a very simple protocol to link content and services directly from DNS.
-
-DNSLink leverages the powerful distributed architecture of DNS for a variety of systems that require internet scale mutable names or pointers.
+DNSLink is the specification of a format for [DNS][] [`TXT` records][TXT] that allows the association of [decentralized web][dweb] (dweb) resources with a [domain][].
 
 ![](./img/dns-query.png)
 
 ## How does it work?
 
-With DNSLink, you can store a link using any DNS domain name. First, put the link in a `TXT` record at a specific subdomain. Then, you can resolve the link from any program by looking up the TXT record value. Your programs and systems can parse out the record value, and follow the link wherever it may go. Yes, it is that simple.
+When you register a domain at your name registrar (eg. namecheap.com) you can set `TXT` entries additionally to `A` or `CNAME`.
 
-### DNSLink Format
+DNSLink specifies a format for `TXT` entries that allow you to _link_ dweb resources to that domain.
 
-DNSLink values are of the form:
+Using just a DNS client, anyone can quickly lookup the link and request the resource through a decentralized network.
 
-```
-dnslink=<value>
-```
-
-- The `<value>` is the link you want to set. The `<value>` is any link you wish to use. It could be a URL or a path. The `<value>` is in text form, not binary packed, so that it works well with DNS tooling and services.
-  - _(Note: in the future, the value may be a [multiaddr](https://multiformats.io/multiaddr/), in text format. multiaddr is a format for specifying links and network addresses in a self-describing way.)_
-- The prefix `dnslink=` is there to signal that this `TXT` record value is a DNSLink. This is important because many systems use TXT records, and there is a convention of storing multiple space separated values in a single `TXT` record. Following this format allows your DNSLink resolver to parse through whatever is in the `TXT` record and use the first entry prefixed with `dnslink=`.
-
-### DNSLink chaining
-
-As `RFC 1034` says:
-
-> Of course, by the robustness principle, domain software should not fail
-> when presented with CNAME chains or loops; CNAME chains should be followed
-> and CNAME loops signalled as an error.
-
-Tools should support DNSLink chaining and detect loops as errors.
+Here is an example for a valid DNSLink `TXT` entry:
 
 ```
-> dig +short TXT _dnslink.test3.dnslink.dev
-dnslink=/dnslink/test4.dnslink.dev
+dnslink=/ipfs/QmaCveU7uyVKUSczmiCc85N7jtdZuBoKMrmcHbnnP26DCx
 ```
 
-Should go on to resolve
+### Tools
+
+You _can_ use `dig` to lookup the `dnslink=` TXT entries for at domain. <br>_(for Windows users: `dig.exe` is part of [the ISC's `bind` package](https://www.isc.org/download/))_
+
+```sh
+> dig +short TXT _dnslink.dnslink.dev
+_dnslink.dnslink-website.on.fleek.co.
+"dnslink=/ipfs/QmaCveU7uyVKUSczmiCc85N7jtdZuBoKMrmcHbnnP26DCx"
+```
+
+Considering the subtle details of DNSLink however, it is better to use the `dnslink` CLI client provided with either [`@dnslink/js`][js] or [`dnslink-std/go`][go].
+
+```sh
+> dnslink dnslink.dev
+/ipfs/QmaCveU7uyVKUSczmiCc85N7jtdZuBoKMrmcHbnnP26DCx    [ttl=120]
+```
+
+
+### Format
+
+DNSLink entries are of the form:
 
 ```
-> dig +short TXT _dnslink.test4.dnslink.dev
-dnslink=/ipfs/Qmc2o4ZNtbinEmRF9UGouBYTuiHbtCSShMFRbBY5ZiZDmU
+dnslink=/<key>/<value>
 ```
+
+- The prefix `dnslink=/` is there to signal that this `TXT` record value is a DNSLink. This is important because `TXT` records are used for many purposes that DNSLink should not interfere with.
+- As there are more than one decentralized system, the `<key>` indicates which decentralized system you want to use.
+- The `<value>` is the link you want to set. The `<value>` is any link you wish to use. It could be a URL or a path.
+
+### `_dnslink` subdomain
+
+DNSLink entries can be specified directly on the domain or on the `_dnslink` subdomain. The entries specified in the **`_dnslink` subdomain are given priority!**
+
+For example, lets say you specify two entries like this:
+
+```shell
+> dig +short TXT fictive.domain
+dnslink=/ipfs/QmAAAA....AAAA
+
+> dig +short TXT _dnslink.fictive.domain
+dnslink=/ipfs/QmBBBB....BBBB
+```
+
+Looking up `fictive.domain` will return the entry of `_dnslink.fictive.domain`!
+
+```shell
+> dnslink fictive.domain
+/ipfs/QmBBBB....BBBB [ttl=60]
+```
+
+Using a `_dnslink` subdomain prevents conflicts with `CNAME` and `ALIAS` records. It is also allows you to give control over your DNSLink records to a third party without giving away full control over the original DNS zone. 
+
+`TXT` records on the `domain` without the `_dnslink` subdomain are discouraged and exist for legacy reasons. We historically started with supporting records on the normal domain, and only found the issue with `CNAME` and `ALIAS` records later on.
+
+It is _not required_ but strongly recommended to **set the dnslink entry on the `_dnslink` subdomain!**
+
+### Multiple entries
+
+#### Multiple `dnslink=` `TXT` entries per domain
+
+There is more than one kind of dweb resource out there. [`ipfs`][ipfs] and [`hyper`][hyper] as just two popular examples. In order for domains to be able to provide multiple representations, you can specify more than one `dnslink=/<key>/<value>` TXT entry per domain. DNSLink compatible implementations are encouraged to return a result that groups results by `key`.
+
+```js
+const { links } = await resolveN('dnslink.dev')
+links.ipfs //...
+links.hyper //...
+```
+
+#### Multiple values per key
+
+Most dweb formats have a 1:1 relationship. For example, one domain is supposed to point to one `ipfs` resource. But some systems - like [multiaddr][] - may make use of multiple links to link more than one well-known peer. Other systems may add meta information. For that resason DNSLink clients need to return a list of links per `key`.
+
+```js
+Array.isArray(links.ipfs) // true if ipfs links are given.
+```
+
+#### Sorting
+
+DNSLink values need to be sorted alphanumerically by lower entries first. This is relevant because conventional DNS clients - like `dig` - do not need to return TXT entries in a sorted manner!
+
+```sh
+# OK
+dnslink=/foo/B
+dnslink=/foo/C
+dnslink=/bar/A # Its okay for the key to be unsorted!
+
+# NOT OK
+dnslink=/foo/C # ... but the value needs to be sorted!
+dnslink=/foo/B
+dnslink=/bar/A
+```
+
+### Chaining and redirects
+
+Additionally to the regular `CNAME` method for redirects, DNSLink supports redirects using the special `dnslink` key.
+
+The redirect can be of the format:
+
+```
+dnslink=/dnslink/<redirect>
+```
+
+Here is an example for how a redirect works:
+
+```sh
+> dig +short TXT _dnslink.t09.dnslink.dev
+dnslink=/dnslink/b.t09.dnslink.dev
+
+> dig +short TXT _dnslink.b.t09.dnslink.dev
+dnslink=/ipfs/AADE
+
+> dnslink t09.dnslink.dev
+/ipfs/AADE      [ttl=3600]
+```
+
+#### Precendence
+
+Redirects take priority over other `dnslink=` entries! If a redirect is present the other entries will be ignored!
+
+```sh
+> dig +short TXT t14.dnslink.dev
+"dnslink=/dnslink/1.t14.dnslink.dev"
+"dnslink=/ipfs/mnop"
+
+> dig +short TXT 1.t14.dnslink.dev
+"dnslink=/ipns/AALM"
+
+> dnslink t14.dnslink.dev
+/ipns/AALM      [ttl=3600]
+```
+
+#### Limits to Redirects
+
+DNSLink implementations need to limit redirects to **at most 32**. Counting even fallbacks from `_dnslink.<domain>` to `<domain>` as redirect. Redirects exceeding that number _(or are identified as circluar)_ are treated as errors.
+
+
+The number of redirects needs to be consistent between all implementations for a predictable client behavior.
+
+Redirects need to point to valid dns domains. This means that they can have at most `253` characters in total with `63` characters max per subdomain. No domain part may be empty.
+
+```sh
+# invalid: empty tld
+dnslink=/dnslink/.
+# invalid because of empty subdomain
+dnslink=/dnslink/foo..bar
+# too long subdomain (exceeds 63 chars)
+dnslink=/dnslink/abc{ +54 chars }efg.com
+# too long (exceeds 253 chars)
+dnslink=/dnslink/_dnslink.abc{ +239 chars }efg
+# too long because _dnslink. prefix is added
+dnslink=/dnslink/abc{ +239 chars }efg
+```
+
+#### Paths
+
+When specifying a redirect you may also specify a deep link on the redirect:
+
+```
+dnslink=/dnslink/target.domain/some/path?foo=bar
+```
+
+In this example **`/some/path?foo=bar`** is a deep link. DNSLink does not specify _how_ these paths are used by the different dweb formats. `ifps` may use these differently from `hyper`. You need to lookup the respective specification or implementation to see how paths are used.
+
+The DNSLink implementations will return any given path specification as separate `path` list that needs to be combined by the user:
+
+```js
+const { links, path } = await resolveN('redirecting.domain')
+
+path[0]
+// {
+//   pathname: '/some/path',
+//   search: {
+//     foo: ['bar']
+//   }
+// }
+```
+
+The standard libraries are encouraged to provide a `reducePath` function that can be used to combine/reduce a given path.
+
+```js
+const { links, path } = await resolveN('redirecting.domain')
+reducePath(links.ipfs[0], path) // <value>/some/path?foo=bar
+```
+
+### Encoding
+
+DNSLink entries are limited to [ASCII][] characters. For Unicode/UTF-8 characters, DNSLink clients support [percent encoding][%-encoding] transparently.
+
+```shell
+# Invalid
+dnslink=/aフ/bar
+dnslink=/foo/bホ
+
+# Valid
+dnslink=/%E3%83%95%E3%82%B2/bar
+dnslink=/foo/%E3%83%9B%E3%82%AC
+```
+
+The valid entries will be decoded by the libraries:
+
+```javascript
+const { links } = await resolveN('...')
+
+deepEqual(links, {
+  'フゲ': ['bar'],
+  'foo': ['ホガ']
+})
+```
+
+_Note:_ Technically `TXT` entries are transported as binary data and could be interpreted as UTF-8 characters. As the encoding outside the ASCII
+space is not specified DNSLink does not allow these, to prevent compilations with other DNS tools.
+
+[DNS]: https://en.wikipedia.org/wiki/Domain_Name_System
+[TXT]: https://en.wikipedia.org/wiki/TXT_record
+[dweb]: https://en.wikipedia.org/wiki/Decentralized_web
+[domain]: https://en.wikipedia.org/wiki/Domain_name
+[js]: https://npmjs.com/package/@dnslink/js
+[ASCII]: https://en.wikipedia.org/wiki/ASCII
+[go]: https://github.com/dnslink-std/go/releases
+[js-cli]: https://github.com/dnslink-std/js#command-line
+[go-cli]: https://github.com/dnslink-std/go#command-line
+[ipfs]: https://ipfs.io
+[hyper]: https://hypercore-protocol.org/protocol/#hyperdrive
+[multiaddr]: https://multiformats.io/multiaddr/
+[punycode]: https://en.wikipedia.org/wiki/Punycode
+[%-encoding]: https://en.wikipedia.org/wiki/Percent-encoding
 
 ## Tutorial
 
@@ -334,7 +536,12 @@ Of course, DNS has shortcomings:
 
 These are all good reasons to develop new, better name systems. But until those work better than DNS, you'll probably use DNS.
 
-## Contributors
+## Contribute
+
+The DNSLink project is organized through github's ["dnslink-std" organization](https://github.com/dnslink-std/community).
+
+
+### Contributors
 
 - [@jbenet](https://github.com/jbenet)
 - [@whyrusleeping](https://github.com/whyrusleeping)

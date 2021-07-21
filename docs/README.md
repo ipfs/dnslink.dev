@@ -1,3 +1,10 @@
+---
+head:
+  - - link
+    - rel: canonical
+      href: https://dnslink.dev/
+---
+
 ## Introduction
 
 DNSLink is a very simple protocol to link content and services directly from DNS.
